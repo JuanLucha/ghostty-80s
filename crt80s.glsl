@@ -1,11 +1,18 @@
 // crt80s.glsl — 80s colour-CRT look for Ghostty 1.3.1 custom shader.
 // Ghostty prepends the version directive, uniforms, io and main(); this supplies mainImage only.
-// fragCoord.y is DOWN (macOS/Metal). Edit the dial block below; nothing else needs tuning.
+// y is DOWN on Metal/macOS and UP on OpenGL/Linux, controlled by Y_DOWN.
+// Input colour space is controlled by BLENDING_NATIVE: gamma-encoded under native
+// alpha-blending, already linear under linear / linear-corrected.
+// Edit the dial block below; nothing else needs tuning.
 // Uses only the documented uniforms; output goes to fragColor.
 
 // ---------------------------------------------------------------------------
 // THE DIAL — unit / range / effect. Every tunable lives here.
 // ---------------------------------------------------------------------------
+// Platform switches: set these to match the host, then tune the dial below.
+const bool BLENDING_NATIVE = true;  // true = alpha-blending native (macOS default); false = linear / linear-corrected (Linux default)
+const bool Y_DOWN          = true;  // true = Metal/macOS; false = OpenGL/Linux
+
 const float SCANLINE_PERIOD_PX  = 6.0;    // device px between scanlines; 2 = one line every other pixel row (2..48)
 const float SCANLINE_PHASE_PX   = 0.5;    // centre of the first device row; keep it half-integer on short periods
 const float SCANLINE_DEPTH      = 0.35;   // fraction removed inside the line, ink only (0..0.7)
@@ -41,7 +48,10 @@ vec3 linearize(vec3 c) { return pow(max(c, vec3(0.0)), vec3(2.2)); }
 
 vec3 unpremul(vec4 s) { return s.a > 0.0 ? s.rgb / s.a : vec3(0.0); }
 
-vec3 linearTex(vec2 uv) { return linearize(unpremul(texture(iChannel0, uv))); }
+// Texture samples are gamma-encoded under native blending, already linear otherwise.
+vec3 texToLinear(vec3 c) { return BLENDING_NATIVE ? pow(max(c, vec3(0.0)), vec3(2.2)) : c; }
+
+vec3 linearTex(vec2 uv) { return texToLinear(unpremul(texture(iChannel0, uv))); }
 
 vec2 barrelWarp(vec2 uv, float k) {
     vec2 p = uv * 2.0 - 1.0;
@@ -76,14 +86,14 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
         uv = barrelWarp(uv, CURVATURE);
     }
 
-    // 1. Centre sample: unpremultiply, linearise, keep alpha untouched.
+    // 1. Centre sample: unpremultiply, to linear light, keep alpha untouched.
     vec4 centre = texture(iChannel0, uv);
     float a = centre.a;
-    vec3 centreLin = linearize(unpremul(centre));
+    vec3 centreLin = texToLinear(unpremul(centre));
 
     // Ink mask: gamma-space distance from the theme background. Scanlines ride on
     // this so glyphs keep the bands and empty background stays flat.
-    vec3 centreGamma = unpremul(centre);
+    vec3 centreGamma = pow(max(centreLin, vec3(0.0)), vec3(1.0 / 2.2));
     float inkDiff = max(max(abs(centreGamma.r - iBackgroundColor.r),
                             abs(centreGamma.g - iBackgroundColor.g)),
                         abs(centreGamma.b - iBackgroundColor.b));
@@ -102,9 +112,9 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
     float d2 = dot(p, p);
     float maxD2 = 0.25 * (aspect * aspect + 1.0);
     float offUv = MISCONVERGENCE_PX * (d2 / maxD2) / res.x;
-    vec3 tapR = linearize(unpremul(texture(iChannel0, uv + vec2(offUv, 0.0))));
-    vec3 tapG = linearize(unpremul(texture(iChannel0, uv)));
-    vec3 tapB = linearize(unpremul(texture(iChannel0, uv - vec2(offUv, 0.0))));
+    vec3 tapR = texToLinear(unpremul(texture(iChannel0, uv + vec2(offUv, 0.0))));
+    vec3 tapG = texToLinear(unpremul(texture(iChannel0, uv)));
+    vec3 tapB = texToLinear(unpremul(texture(iChannel0, uv - vec2(offUv, 0.0))));
     vec3 color = vec3(tapR.r, tapG.g, tapB.b);
 
     // 3. Bloom: fg-relative threshold, 8-tap ring + centre, soft knee.
@@ -125,11 +135,12 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
     float peak = max(max(color.r, color.g), color.b);
     color /= max(1.0, peak);
 
-    // 5. Re-encode.
+    // 5. Re-encode to perceptual space; masks below expect it.
     vec3 rgb = pow(max(color, vec3(0.0)), vec3(1.0 / 2.2));
 
     // 6. Masks in gamma space: scanlines ride the ink mask (text only), grille is whole-frame.
-    rgb *= scanlineMask(fragCoord.y, scanDepth);
+    float yTop = Y_DOWN ? fragCoord.y : (res.y - fragCoord.y);
+    rgb *= scanlineMask(yTop, scanDepth);
     rgb *= grilleMask(fragCoord.x, grilleAmp);
 
     vec2 q = (uv - 0.5) * vec2(aspect, 1.0) * 2.0;
@@ -153,6 +164,7 @@ void mainImage(out vec4 fragColor, in vec2 fragCoord) {
     float valid = step(1.0, iCurrentCursor.z) * step(1.0, iCurrentCursor.w) * float(iCursorVisible);
     rgb += iCurrentCursorColor.rgb * (halo * CURSOR_GLOW * valid);
 
-    // 9. Re-premultiply; alpha passes through untouched.
-    fragColor = vec4(rgb * a, a);
+    // 9. Back to linear light for linear blending; re-premultiply, alpha passes through.
+    vec3 outRgb = BLENDING_NATIVE ? rgb : pow(max(rgb, vec3(0.0)), vec3(2.2));
+    fragColor = vec4(outRgb * a, a);
 }

@@ -7,7 +7,9 @@ because each of those softens 1-px stems over an eight-hour session. It never to
 
 ## Install
 
-1. Symlink the shader into Ghostty's shader directory:
+1. Symlink the shader into Ghostty's shader directory, `$XDG_CONFIG_HOME/ghostty/shaders/`. It
+   defaults to `~/.config/ghostty/shaders/`, which is the same path on macOS and Linux; use your
+   prefix instead if `$XDG_CONFIG_HOME` is set:
 
    ```
    ln -sf ~/code/ghostty-80s/crt80s.glsl ~/.config/ghostty/shaders/crt80s.glsl
@@ -24,17 +26,17 @@ because each of those softens 1-px stems over an eight-hour session. It never to
    `custom-shader-animation` defaults to `true` and must be set to `false` explicitly, because this
    shader is static.
 
-3. Reload the config (`Cmd+Shift+,`) or restart Ghostty.
+3. Reload the config (`Cmd+Shift+,` on macOS, `Ctrl+Shift+,` on Linux and BSD) or restart Ghostty.
 
 ## The dial
 
 | Constant | Default | Range | Effect |
 | --- | --- | --- | --- |
-| SCANLINE_PERIOD_PX | 2.0 | 2–48 | Device pixels between scanlines; 2 is one dark row every other device pixel row. |
+| SCANLINE_PERIOD_PX | 6.0 | 2–48 | Device pixels between scanlines; 2 is one dark row every other device pixel row. |
 | SCANLINE_PHASE_PX | 0.5 | 0–period | Offset of the first line. Keep it half-integer: device rows centre at y = 0.5, 1.5, … |
 | SCANLINE_DEPTH | 0.35 | 0–0.7 | Fraction of the encoded value removed inside the dark line, over glyphs only. |
-| SCANLINE_THICK_PX | 1.0 | 0.5–16 | Full width of the dark line, in device pixels. |
-| SCANLINE_EDGE_PX | 0.5 | 0.5–4 | Edge softness; 0.5 gives crisp pixel-on/pixel-off, 3 gives a soft band. |
+| SCANLINE_THICK_PX | 2.0 | 0.5–16 | Full width of the dark line, in device pixels. |
+| SCANLINE_EDGE_PX | 4.0 | 0.5–4 | Edge softness; 0.5 gives crisp pixel-on/pixel-off, 3 gives a soft band. |
 | SCANLINE_BG_DEPTH | 0.0 | 0–0.2 | Same, over empty background; 0 keeps the background clean. |
 | INK_LO | 0.03 | 0–1 | Gamma-space distance from the theme background where a pixel starts counting as ink. |
 | INK_HI | 0.16 | 0–1 | Distance at which a pixel counts as ink fully; the scanlines fade in between the two. |
@@ -50,13 +52,25 @@ because each of those softens 1-px stems over an eight-hour session. It never to
 | CURVATURE | 0.0 | 0–0.15 | Barrel warp. 0 is flat glass and costs nothing. |
 | SHEEN | 0.0 | 0–0.10 | Faint diagonal reflection band. |
 | SHEEN_WIDTH | 0.22 | 0.10–0.60 | Width of the sheen band, in uv. |
-| CURSOR_GLOW | 0.45 | 0–1 | Extra halo around the cursor block. |
-| CURSOR_HALO_PX | 14.0 | 4–32 | Gaussian falloff distance of the cursor halo, in device px. |
+| CURSOR_GLOW | 0.25 | 0–1 | Extra halo around the cursor block. |
+| CURSOR_HALO_PX | 8.0 | 4–32 | Gaussian falloff distance of the cursor halo, in device px. |
 | WARM_TINT | 1.00, 0.94, 0.86 | — | Warmth on the bloom only; flat colours keep exact hues. |
 
 Every value is in device pixels, a 0–1 fraction, or a curve exponent. Lowering `SCANLINE_DEPTH`,
 `GRILLE_AMPLITUDE` and `MISCONVERGENCE_PX` is the fastest way to make the look quieter; raising
 `SCANLINE_BG_DEPTH` is the only way to put scanlines back on the empty background.
+
+## Other platforms
+
+The dial defaults describe macOS on Metal and nothing else, so two compile-time switches sit above
+it. `BLENDING_NATIVE` matches `alpha-blending = native`, the macOS default, and `Y_DOWN` matches
+Metal's y axis. On Linux and the BSDs Ghostty defaults to `alpha-blending = linear-corrected` and
+OpenGL's y-up coordinates, so set `Y_DOWN = false` and either set `BLENDING_NATIVE = false` while
+leaving `alpha-blending` alone, or add `alpha-blending = native` to your config and keep
+`BLENDING_NATIVE = true`. The second is the recommended one-liner: it is a single config line and
+it leaves `BLENDING_NATIVE` and the dial at their shipped defaults; `Y_DOWN` still has to be
+flipped. Neither switch is detected at runtime
+([ADR 0003](docs/adr/0003-platform-switches.md)).
 
 ## Things that will bite you
 
@@ -67,10 +81,14 @@ Every value is in device pixels, a 0–1 fraction, or a curve exponent. Lowering
   Ghostty or point the config at a different filename.
 - A shader that fails to compile is not reported as a config error. It is dropped, which can leave
   a black surface; the error goes to the system log only.
-- `fragCoord.y` points **down** on macOS/Metal, unlike Shadertoy.
-- This shader is written for `alpha-blending = native` (the macOS default), which means values
-  arrive gamma-encoded in Display P3. Under `linear` or `linear-corrected` the values arrive
-  linearised and the bloom maths double-corrects.
+- `fragCoord.y` is **down** on Metal and **up** on OpenGL. Scanlines use `Y_DOWN` so they stay
+  anchored to the top edge; the cursor rect and every other effect are direction-agnostic.
+- This shader is written for `alpha-blending = native`, where values arrive gamma-encoded: Display
+  P3 on macOS, sRGB on Linux. Under `linear` or `linear-corrected` the values arrive linear, which
+  is why `BLENDING_NATIVE` exists; the Linux default is `linear-corrected`. The background and
+  foreground uniforms are always raw sRGB and are always linearised in the shader, independent of
+  the switch. The cursor colour is raw sRGB too, but it is added in perceptual space, so it needs
+  no conversion in either mode.
 - Output keeps the incoming premultiplied alpha, so `background-opacity` and transparency behave
   normally.
 - On a light theme the bloom switches off and the masks thin out by design; it is not a bug.
@@ -81,6 +99,8 @@ Every value is in device pixels, a 0–1 fraction, or a curve exponent. Lowering
   ([ADR 0001](docs/adr/0001-legibility-ceiling.md)).
 - The shader ships alone and never edits your palette; on light backgrounds it degrades instead of
   glowing ([ADR 0002](docs/adr/0002-palette-agnostic-shader.md)).
+- The only backend differences are two compile-time switches rather than runtime detection
+  ([ADR 0003](docs/adr/0003-platform-switches.md)).
 - When retuning for legibility, effects are shed in this order: misconvergence, then grille, then
   bloom, then scanlines. Vignette is never shed.
 
