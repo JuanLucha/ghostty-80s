@@ -1,0 +1,3 @@
+# Shader only, agnostic to the user's palette
+
+The deliverable is one custom shader and no companion theme: it never overwrites the user's colours, never applies a global cast (warmth lives only in the bloom), and its bloom threshold tracks `iForegroundColor` instead of a fixed luminance. On a light theme it degrades honestly — bloom off, scanlines and grille thinned — rather than inverting into an ink-bleed halo, because emission on a bright background is a physical contradiction. Reversing this means re-deriving every adaptive path, so the constraint is recorded rather than left implicit in the code.

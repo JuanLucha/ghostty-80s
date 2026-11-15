@@ -1,0 +1,3 @@
+# Legibility ceiling outranks period accuracy
+
+The target look is a composite-era colour CRT, but every effect that softens 1-px glyph stems is off by default or shed first: no glass curvature (`CURVATURE = 0.0`), no composite chroma smear, no animation. Misconvergence survives only because it shifts hue rather than smearing it, and if the acceptance criteria cannot be met, effects are dropped in a fixed order — misconvergence, grille, bloom, scanlines — with vignette never shed. A future reader will ask why a "composite era" shader has no curvature; the answer is that eight hours of reading beats one authentic screenshot, and reversing this means re-tuning every other constant.
